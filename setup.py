@@ -12,6 +12,7 @@ install_requires = [
     "requests>=2.7.0",
     "requests-toolbelt>=0.7.1",
     "pytz",
+    "xmlsec>=0.6.1",
 ]
 
 docs_require = [
@@ -19,10 +20,6 @@ docs_require = [
 ]
 
 async_require = ["aiohttp>=1.0"]
-
-xmlsec_require = [
-    "xmlsec>=0.6.1",
-]
 
 tests_require = [
     "coverage[toml]==5.2.1",
@@ -62,7 +59,6 @@ setup(
         "docs": docs_require,
         "test": tests_require,
         "async": async_require,
-        "xmlsec": xmlsec_require,
     },
     entry_points={},
     package_dir={"": "src"},

@@ -14,7 +14,10 @@ from lxml.etree import QName
 from zeep import ns
 from zeep.exceptions import SignatureVerificationFailed
 from zeep.utils import detect_soap_env
-from zeep.wsse.utils import ensure_id, get_security_header
+
+from .keys import KeysInfo
+from .utils import ensure_id, get_security_header, _read_file
+
 
 try:
     import xmlsec
@@ -26,19 +29,18 @@ except ImportError:
 SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
 
 
-def _read_file(f_name):
-    with open(f_name, "rb") as f:
-        return f.read()
-
-
-def _make_sign_key(key_data, cert_data, password):
-    key = xmlsec.Key.from_memory(key_data, xmlsec.KeyFormat.PEM, password)
-    key.load_cert_from_memory(cert_data, xmlsec.KeyFormat.PEM)
+def _make_sign_key(keys_info):
+    key = xmlsec.Key.from_memory(
+        keys_info.key_data, xmlsec.KeyFormat.PEM, keys_info.password
+    )
+    key.load_cert_from_memory(keys_info.cert_data, xmlsec.KeyFormat.PEM)
     return key
 
 
-def _make_verify_key(cert_data):
-    key = xmlsec.Key.from_memory(cert_data, xmlsec.KeyFormat.CERT_PEM, None)
+def _make_verify_key(keys_info):
+    key = xmlsec.Key.from_memory(
+        keys_info.verify_cert_data, xmlsec.KeyFormat.CERT_PEM
+    )
     return key
 
 
@@ -47,51 +49,32 @@ class MemorySignature:
 
     def __init__(
         self,
-        key_data,
-        cert_data,
-        password=None,
-        signature_method=None,
-        digest_method=None,
+        keys_info,
+        signature_method=xmlsec.Transform.RSA_SHA256,
+        digest_method=xmlsec.Transform.SHA256,
     ):
         check_xmlsec_import()
 
-        self.key_data = key_data
-        self.cert_data = cert_data
-        self.password = password
+        self.keys_info = keys_info
         self.digest_method = digest_method
         self.signature_method = signature_method
 
     def apply(self, envelope, headers):
-        key = _make_sign_key(self.key_data, self.cert_data, self.password)
+        key = _make_sign_key(self.keys_info)
         _sign_envelope_with_key(
             envelope, key, self.signature_method, self.digest_method
         )
         return envelope, headers
 
     def verify(self, envelope):
-        key = _make_verify_key(self.cert_data)
+        key = _make_verify_key(self.keys_info)
         _verify_envelope_with_key(envelope, key)
         return envelope
 
 
 class Signature(MemorySignature):
     """Sign given SOAP envelope with WSSE sig using given key file and cert file."""
-
-    def __init__(
-        self,
-        key_file,
-        certfile,
-        password=None,
-        signature_method=None,
-        digest_method=None,
-    ):
-        super().__init__(
-            _read_file(key_file),
-            _read_file(certfile),
-            password,
-            signature_method,
-            digest_method,
-        )
+    pass
 
 
 class BinarySignature(Signature):
@@ -100,7 +83,7 @@ class BinarySignature(Signature):
     Place the key information into BinarySecurityElement."""
 
     def apply(self, envelope, headers):
-        key = _make_sign_key(self.key_data, self.cert_data, self.password)
+        key = _make_sign_key(self.keys_info)
         _sign_envelope_with_key_binary(
             envelope, key, self.signature_method, self.digest_method
         )
@@ -224,7 +207,7 @@ def _signature_prepare(envelope, key, signature_method, digest_method):
     signature = xmlsec.template.create(
         envelope,
         xmlsec.Transform.EXCL_C14N,
-        signature_method or xmlsec.Transform.RSA_SHA1,
+        signature_method,
     )
 
     # Add a KeyInfo node with X509Data child to the Signature. XMLSec will fill
@@ -244,7 +227,7 @@ def _signature_prepare(envelope, key, signature_method, digest_method):
     _sign_node(ctx, signature, envelope.find(QName(soap_env, "Body")), digest_method)
     timestamp = security.find(QName(ns.WSU, "Timestamp"))
     if timestamp != None:
-        _sign_node(ctx, signature, timestamp)
+        _sign_node(ctx, signature, timestamp, digest_method)
     ctx.sign(signature)
 
     # Place the X509 data inside a WSSE SecurityTokenReference within
@@ -334,7 +317,7 @@ def _verify_envelope_with_key(envelope, key):
         raise SignatureVerificationFailed()
 
 
-def _sign_node(ctx, signature, target, digest_method=None):
+def _sign_node(ctx, signature, target, digest_method):
     """Add sig for ``target`` in ``signature`` node, using ``ctx`` context.
 
     Doesn't actually perform the signing; ``ctx.sign(signature)`` should be
@@ -357,7 +340,7 @@ def _sign_node(ctx, signature, target, digest_method=None):
 
     # Add reference to signature with URI attribute pointing to that ID.
     ref = xmlsec.template.add_reference(
-        signature, digest_method or xmlsec.Transform.SHA1, uri="#" + node_id
+        signature, digest_method, uri="#" + node_id
     )
     # This is an XML normalization transform which will be performed on the
     # target node contents before signing. This ensures that changes to

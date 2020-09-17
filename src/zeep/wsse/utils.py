@@ -52,3 +52,8 @@ def ensure_id(node):
         id_val = get_unique_id()
         node.set(ID_ATTR, id_val)
     return id_val
+
+
+def _read_file(f_name, mode="rb"):
+    with open(f_name, mode) as f:
+        return f.read()
